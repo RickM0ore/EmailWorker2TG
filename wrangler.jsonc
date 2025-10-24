@@ -1,0 +1,24 @@
+{
+	"name": "rapid-meadow-42b5",
+	"main": "src/worker.js",
+	"workers_dev": true,
+	"preview_urls": true,
+	"compatibility_date": "2024-09-23",
+	"observability": {
+		"enabled": false,
+		"head_sampling_rate": 1,
+		"logs": {
+			"enabled": true,
+			"head_sampling_rate": 1,
+			"persist": true,
+			"invocation_logs": true
+		}
+	},
+	"vars": {
+		"BOT_TOKEN": "",
+		"CHAT_ID": ""
+	},
+	"compatibility_flags": [
+		"nodejs_compat"
+	]
+}

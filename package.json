@@ -1,0 +1,17 @@
+{
+	"name": "rapid-meadow-42b5",
+	"version": "0.0.0",
+	"private": true,
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"start": "wrangler dev"
+	},
+	"devDependencies": {
+		"wrangler": "^4.44.0"
+	},
+	"dependencies": {
+		"html-entities": "^2.6.0",
+		"postal-mime": "^2.5.0"
+	}
+}
