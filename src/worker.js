@@ -126,6 +126,85 @@ async function sendAttachment(attachment, replyToMessageId, env) {
 	}
 }
 
+class ElementHandler {
+	constructor() {
+		this.markdownOutput = '';
+		this.tag = '';
+		this.herf = '';
+		this.src = '';
+		this.textAppender = '';
+		this.nestedInA = false;
+	}
+
+	// 处理所有元素（除了 <a> 标签，我们在单独的处理器中处理）
+	// 目标：移除所有标签，只保留文本
+	element(element) {
+		if (['style', 'script'].includes(element.tagName.toLowerCase())) {
+			element.remove();
+			return;
+		}
+		if (['br'].includes(element.tagName.toLowerCase()))
+			return;
+		this.tag = element.tagName.toLowerCase();
+		if (element.tagName === 'a') {
+			this.herf = element.getAttribute('href') || '';
+			this.nestedInA = true;
+			element.onEndTag(() => {
+				this.nestedInA = false;
+			});
+		}
+		if (['img', 'video', 'iframe', 'audio'].includes(element.tagName.toLowerCase())) {
+			this.src = element.getAttribute('src');
+		}
+		element.removeAndKeepContent();
+		console.log('ElementHandler element', element);
+		// 对于链接 (a) 标签，我们什么都不做，让 a 标签处理器来处理
+	}
+
+	// 处理文本内容
+	text(text) {
+		console.log('ElementHandler text', text);
+		if (this.tag === 'td')
+			text.after(' ');
+		if (this.tag === 'a') {
+			text.replace(`[ ${escapeMarkdownV2(text.text).trim()} ](${this.herf})`);
+			this.tag = '';
+			return;
+		} else if (['img', 'video', 'iframe', 'audio'].includes(this.tag) && !this.nestedInA) {
+			if (text.lastInTextNode) {
+				text.replace(`[ ${this.tag} ](${this.src})`);
+				this.tag = '';
+			}
+			return;
+		}
+		text.replace(escapeMarkdownV2(text.text) + '\n');
+	}
+
+}
+
+
+class DocumentHandler {
+	comments(comment) {
+		comment.remove();
+	}
+}
+
+
+async function processHtml(html) {
+
+	const rewriterInstance = new HTMLRewriter();
+	rewriterInstance.on('*', new ElementHandler()); // 捕获所有元素的开始和文本
+	rewriterInstance.onDocument(new DocumentHandler());
+	let text = await rewriterInstance.transform(new Response(html)).text();
+	text =
+		text.split('\n').map(row => {
+			return decode(row.trim());
+		}).filter(row => {
+			return !!row.trim();
+		});
+	return text.join('\n').replaceAll(/<br\/?>/g, '\n');
+}
+
 // --- Email Worker 入口 ---
 
 export default {
@@ -137,17 +216,18 @@ export default {
 	async email(message, env, ctx) {
 		try {
 			const parser = new PostalMime();
-			const parsedEmail = await parser.parse(message.raw, {
-				attachmentEncoding: 'base64' // 启用 Base64 编码附件
-			});
+			const parsedEmail = await parser.parse(message.raw);
 
 			// 1. 构建并发送主邮件内容
 			const from = parsedEmail.from ? `${escapeMarkdownV2(parsedEmail.from.name ?? '')} <\`${parsedEmail.from.address}\`\\>` : '未知发件人';
 			const to = parsedEmail.to ? parsedEmail.to.map(rcpt => `${escapeMarkdownV2(rcpt.name ?? '')} <\`${rcpt.address}\`\\>`).join(', ') : '未知收件人';
 			const subject = parsedEmail.subject || '\\(无主题\\)';
 			let body = parsedEmail.text || parsedEmail.html || '\\(无内容\\)';
-
-			body = decode(body);
+			let escaped;
+			if (parsedEmail.text)
+				escaped = escapeMarkdownV2(decode(parsedEmail.text));
+			else
+				escaped = await processHtml(body);
 // 3. 构建消息，并对不可控的部分进行转义
 // 头部是我们自己控制的，所以不需要转义
 			const fullMessageText = `
@@ -155,10 +235,9 @@ export default {
 **${subject}**
 **From:** ${from}
 **To:** ${to}
-\\-\\-\\-
-${escapeMarkdownV2(body)}
+\\=\\=\\=\\=\\=\\=
+${escaped}
       `;
-
 
 			// 发送主消息，并获取它的 ID
 			const firstMessageId = await sendSplitMessage(fullMessageText, env);
@@ -173,6 +252,16 @@ ${escapeMarkdownV2(body)}
 
 		} catch (error) {
 			console.error(`邮件处理失败: ${error.message}`);
+			await sendSplitMessage(`
+📬 **新邮件**
+**${message?.headers?.get('Subject') || '未获取到标题'}**
+**From:** ${message.from}
+**To:** ${message.to}
+\\-\\-\\-\\-\\-\\-
+(解析正文错误): ${error.message}
+`, env);
 		}
 	}
 };
+
+

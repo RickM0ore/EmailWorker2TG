@@ -8,7 +8,7 @@
 		"start": "wrangler dev"
 	},
 	"devDependencies": {
-		"wrangler": "^4.44.0"
+		"wrangler": "^4.45.0"
 	},
 	"dependencies": {
 		"html-entities": "^2.6.0",
