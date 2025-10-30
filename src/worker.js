@@ -51,8 +51,11 @@ async function sendSplitMessage(text, env) {
 		const responseData = await response.json();
 		if (!responseData.ok) {
 			console.error(`发送分割消息失败: ${responseData.description}`);
+			if (lastMessageId == null)
+				throw new Error('responseData.description');
 			return lastMessageId; // 返回已发送消息的ID，继续附件流程
 		}
+		console.log('sent a message')
 		lastMessageId = responseData.result.message_id;
 	}
 	return lastMessageId;
@@ -128,18 +131,16 @@ async function sendAttachment(attachment, replyToMessageId, env) {
 
 class ElementHandler {
 	constructor() {
-		this.markdownOutput = '';
 		this.tag = '';
 		this.herf = '';
 		this.src = '';
-		this.textAppender = '';
 		this.nestedInA = false;
 	}
 
 	// 处理所有元素（除了 <a> 标签，我们在单独的处理器中处理）
 	// 目标：移除所有标签，只保留文本
 	element(element) {
-		if (['style', 'script'].includes(element.tagName.toLowerCase())) {
+		if (['style', 'script', 'meta', 'xml', 'head'].includes(element.tagName.toLowerCase())) {
 			element.remove();
 			return;
 		}
@@ -157,17 +158,15 @@ class ElementHandler {
 			this.src = element.getAttribute('src');
 		}
 		element.removeAndKeepContent();
-		console.log('ElementHandler element', element);
 		// 对于链接 (a) 标签，我们什么都不做，让 a 标签处理器来处理
 	}
 
 	// 处理文本内容
 	text(text) {
-		console.log('ElementHandler text', text);
 		if (this.tag === 'td')
 			text.after(' ');
 		if (this.tag === 'a') {
-			text.replace(`[ ${escapeMarkdownV2(text.text).trim()} ](${this.herf})`);
+			text.replace(`[ ${escapeMarkdownV2(decode(text.text)).trim()} ](${this.herf})`);
 			this.tag = '';
 			return;
 		} else if (['img', 'video', 'iframe', 'audio'].includes(this.tag) && !this.nestedInA) {
@@ -177,7 +176,7 @@ class ElementHandler {
 			}
 			return;
 		}
-		text.replace(escapeMarkdownV2(text.text) + '\n');
+		text.replace(escapeMarkdownV2(decode(text.text)) + '\n');
 	}
 
 }
@@ -198,9 +197,9 @@ async function processHtml(html) {
 	let text = await rewriterInstance.transform(new Response(html)).text();
 	text =
 		text.split('\n').map(row => {
-			return decode(row.trim());
+			return row.trim().replace(/<!doctype .*>\n?/i, '');
 		}).filter(row => {
-			return !!row.trim();
+			return !!row.replaceAll(/[\s\n\u200B\u200C\u200D\uFEFF\u2060\u00A0\u034F͏]/g, '');
 		});
 	return text.join('\n').replaceAll(/<br\/?>/g, '\n');
 }
@@ -223,11 +222,15 @@ export default {
 			const to = parsedEmail.to ? parsedEmail.to.map(rcpt => `${escapeMarkdownV2(rcpt.name ?? '')} <\`${rcpt.address}\`\\>`).join(', ') : '未知收件人';
 			const subject = parsedEmail.subject || '\\(无主题\\)';
 			let body = parsedEmail.text || parsedEmail.html || '\\(无内容\\)';
-			let escaped;
-			if (parsedEmail.text)
-				escaped = escapeMarkdownV2(decode(parsedEmail.text));
-			else
+			let separate = '\\=\\=\\=\\=';
+			let escaped = '';
+			if (parsedEmail.html) {
 				escaped = await processHtml(body);
+				separate = 'html';
+			} else {
+				escaped = escapeMarkdownV2(decode(parsedEmail.text));
+				separate = 'text';
+			}
 // 3. 构建消息，并对不可控的部分进行转义
 // 头部是我们自己控制的，所以不需要转义
 			const fullMessageText = `
@@ -235,10 +238,9 @@ export default {
 **${subject}**
 **From:** ${from}
 **To:** ${to}
-\\=\\=\\=\\=\\=\\=
+\\=${separate}\\=
 ${escaped}
       `;
-
 			// 发送主消息，并获取它的 ID
 			const firstMessageId = await sendSplitMessage(fullMessageText, env);
 
@@ -257,11 +259,9 @@ ${escaped}
 **${message?.headers?.get('Subject') || '未获取到标题'}**
 **From:** ${message.from}
 **To:** ${message.to}
-\\-\\-\\-\\-\\-\\-
-(解析正文错误): ${error.message}
+\\=\\(解析正文错误\\)\\=
+${error.message}
 `, env);
 		}
 	}
 };
-
-
