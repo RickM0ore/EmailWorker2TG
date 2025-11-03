@@ -34,28 +34,23 @@ async function sendSplitMessage(text, env) {
 	// 2. 发送分片消息并建立回复链
 	for (const chunk of chunks) {
 		const payload = {
-			chat_id: env.CHAT_ID,
-			text: chunk,
-			parse_mode: 'MarkdownV2'
+			chat_id: env.CHAT_ID, text: chunk, parse_mode: 'MarkdownV2'
 		};
 		if (lastMessageId) {
 			payload.reply_to_message_id = lastMessageId;
 		}
 
 		const response = await fetch(telegramApiUrl, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(payload)
+			method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
 		});
 
 		const responseData = await response.json();
 		if (!responseData.ok) {
 			console.error(`发送分割消息失败: ${responseData.description}`);
-			if (lastMessageId == null)
-				throw new Error('responseData.description');
+			if (lastMessageId == null) throw new Error('responseData.description');
 			return lastMessageId; // 返回已发送消息的ID，继续附件流程
 		}
-		console.log('sent a message')
+		console.log('sent a message');
 		lastMessageId = responseData.result.message_id;
 	}
 	return lastMessageId;
@@ -80,14 +75,10 @@ async function sendAttachment(attachment, replyToMessageId, env) {
 	const parts = [];
 
 	// 1. chat_id 字段 (JSON/文本部分)
-	parts.push(
-		`--${boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n${env.CHAT_ID}\r\n`
-	);
+	parts.push(`--${boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n${env.CHAT_ID}\r\n`);
 
 	// 2. reply_to_message_id 字段 (JSON/文本部分)
-	parts.push(
-		`--${boundary}\r\nContent-Disposition: form-data; name="reply_to_message_id"\r\n\r\n${replyToMessageId}\r\n`
-	);
+	parts.push(`--${boundary}\r\nContent-Disposition: form-data; name="reply_to_message_id"\r\n\r\n${replyToMessageId}\r\n`);
 
 	// 3. 附件文件部分 (二进制部分)
 	// 文件名和 MIME 类型
@@ -116,11 +107,9 @@ async function sendAttachment(attachment, replyToMessageId, env) {
 
 	// 发送请求
 	const response = await fetch(sendDocumentUrl, {
-		method: 'POST',
-		headers: {
+		method: 'POST', headers: {
 			'Content-Type': `multipart/form-data; boundary=${boundary}`
-		},
-		body: requestBody // 直接发送 Uint8Array
+		}, body: requestBody // 直接发送 Uint8Array
 	});
 
 	if (!response.ok) {
@@ -144,8 +133,7 @@ class ElementHandler {
 			element.remove();
 			return;
 		}
-		if (['br'].includes(element.tagName.toLowerCase()))
-			return;
+		if (['br'].includes(element.tagName.toLowerCase())) return;
 		this.tag = element.tagName.toLowerCase();
 		if (element.tagName === 'a') {
 			this.herf = element.getAttribute('href') || '';
@@ -163,10 +151,11 @@ class ElementHandler {
 
 	// 处理文本内容
 	text(text) {
-		if (this.tag === 'td')
-			text.after(' ');
+		if (this.tag === 'td') text.after(' ');
 		if (this.tag === 'a') {
-			text.replace(`[ ${escapeMarkdownV2(decode(text.text)).trim()} ](${this.herf})`);
+			let value = `[ ${escapeMarkdownV2(decode(text.text)).trim()} ](${this.herf})`;
+			text.replace(value);
+			console.log(value);
 			this.tag = '';
 			return;
 		} else if (['img', 'video', 'iframe', 'audio'].includes(this.tag) && !this.nestedInA) {
@@ -195,12 +184,11 @@ async function processHtml(html) {
 	rewriterInstance.on('*', new ElementHandler()); // 捕获所有元素的开始和文本
 	rewriterInstance.onDocument(new DocumentHandler());
 	let text = await rewriterInstance.transform(new Response(html)).text();
-	text =
-		text.split('\n').map(row => {
-			return row.trim().replace(/<!doctype .*>\n?/i, '');
-		}).filter(row => {
-			return !!row.replaceAll(/[\s\n\u200B\u200C\u200D\uFEFF\u2060\u00A0\u034F͏]/g, '');
-		});
+	text = text.split('\n').map(row => {
+		return row.trim().replace(/<!doctype .*>\n?/i, '');
+	}).filter(row => {
+		return !!row.replaceAll(/[\s\n\u200B\u200C\u200D\uFEFF\u2060\u00A0\u034F͏]/g, '');
+	});
 	return text.join('\n').replaceAll(/<br\/?>/g, '\n');
 }
 
@@ -221,16 +209,17 @@ export default {
 			const from = parsedEmail.from ? `${escapeMarkdownV2(parsedEmail.from.name ?? '')} <\`${parsedEmail.from.address}\`\\>` : '未知发件人';
 			const to = parsedEmail.to ? parsedEmail.to.map(rcpt => `${escapeMarkdownV2(rcpt.name ?? '')} <\`${rcpt.address}\`\\>`).join(', ') : '未知收件人';
 			const subject = parsedEmail.subject || '\\(无主题\\)';
-			let body = parsedEmail.text || parsedEmail.html || '\\(无内容\\)';
 			let separate = '\\=\\=\\=\\=';
 			let escaped = '';
 			if (parsedEmail.html) {
-				escaped = await processHtml(body);
+				escaped = await processHtml(parsedEmail.html);
 				separate = 'html';
-			} else {
+			} else if (parsedEmail.text) {
 				escaped = escapeMarkdownV2(decode(parsedEmail.text));
 				separate = 'text';
 			}
+			escaped = escaped || '\\(无内容\\)';
+
 // 3. 构建消息，并对不可控的部分进行转义
 // 头部是我们自己控制的，所以不需要转义
 			const fullMessageText = `
@@ -238,7 +227,7 @@ export default {
 **${subject}**
 **From:** ${from}
 **To:** ${to}
-\\=${separate}\\=
+\\-\\-${separate}\\-\\-
 ${escaped}
       `;
 			// 发送主消息，并获取它的 ID
@@ -246,7 +235,7 @@ ${escaped}
 
 			// 2. 循环发送附件
 			if (parsedEmail.attachments.length > 0 && firstMessageId) {
-				for (const attachment of parsedEmail.attachments) {
+				for await (const attachment of parsedEmail.attachments) {
 					// 在发送附件时，回复到主消息 (firstMessageId)
 					await sendAttachment(attachment, firstMessageId, env);
 				}
@@ -259,7 +248,7 @@ ${escaped}
 **${message?.headers?.get('Subject') || '未获取到标题'}**
 **From:** ${message.from}
 **To:** ${message.to}
-\\=\\(解析正文错误\\)\\=
+\\-\\-\\(解析正文错误\\)\\-\\-
 ${error.message}
 `, env);
 		}
