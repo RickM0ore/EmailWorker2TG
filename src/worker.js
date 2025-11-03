@@ -3,13 +3,27 @@ import { decode } from 'html-entities';
 
 const MAX_TELEGRAM_MESSAGE_LENGTH = 3500;
 const TELEGRAM_API_BASE = 'https://api.telegram.org/bot';
-const linksList = [{ desc: '', link: '' }].slice(0, 0);
+const linksList = [];
 
 // --- 工具函数（与上一版本相同） ---
 
 function escapeMarkdownV2(text) {
 	const charsToEscape = /(?<!\\)[_*\[\]()~`>#+\-=|{}.!]/g;
 	return text.replace(charsToEscape, '\\$&');
+}
+
+const linkHeaderMatcher = /#+/;
+const linkReplacer = /#{5,}/;
+
+function splitAndPush(arr, text) {
+	for (let i = 0; i < text.length; i += MAX_TELEGRAM_MESSAGE_LENGTH) {
+		const chunk = text.substring(i, i + MAX_TELEGRAM_MESSAGE_LENGTH);
+		if (chunk.length < MAX_TELEGRAM_MESSAGE_LENGTH) {
+			return chunk;
+		}
+		arr.push(chunk);
+	}
+	return '';
 }
 
 /**
@@ -27,8 +41,35 @@ async function sendSplitMessage(text, env) {
 	if (text.length <= MAX_TELEGRAM_MESSAGE_LENGTH) {
 		chunks.push(text);
 	} else {
-		for (let i = 0; i < text.length; i += MAX_TELEGRAM_MESSAGE_LENGTH) {
-			chunks.push(text.substring(i, i + MAX_TELEGRAM_MESSAGE_LENGTH));
+		/**
+		 * @type {[RegExpExecArray]}
+		 * */
+		const matches = [];
+		const splits = text.split(linkReplacer);
+		text.matchAll(/#{5,}/g)?.forEach(match => {
+			matches.push(match);
+		});
+		console.log('matches->', matches.length, 'linksList->', linksList.length, 'splits->', splits.length);
+		let builder = '';
+		for (let t of splits) {
+			builder += t;
+			if (builder.length > MAX_TELEGRAM_MESSAGE_LENGTH) {
+				builder = splitAndPush(chunks, builder);
+			}
+			const match = matches[0];
+			const link = linksList[0];
+			if (match && link) {
+				if (builder.length + match[0].length > MAX_TELEGRAM_MESSAGE_LENGTH) {
+					chunks.push(builder);
+					builder = '';
+				}
+				builder += ` [${link.desc}](${link.link}) `;
+				linksList.shift();
+				matches.shift();
+			}
+		}
+		if (builder.length > 0) {
+			chunks.push(builder);
 		}
 	}
 
@@ -155,13 +196,17 @@ class ElementHandler {
 	text(text) {
 		if (this.tag === 'td') text.after(' ');
 		if (this.tag === 'a') {
-			const mdLink = `[ ${escapeMarkdownV2(decode(text.text)).trim() || 'link'} ](${this.herf})`;
-			text.replace(mdLink);
+			const desc = escapeMarkdownV2(decode(text.text)).trim() || 'link';
+			const mdLink = `[ ${desc} ](${this.herf})`;
+			linksList.push({ desc, link: this.herf });
+			text.replace('#'.repeat(mdLink.length));
 			this.tag = '';
 			return;
 		} else if (['img', 'video', 'iframe', 'audio'].includes(this.tag) && !this.nestedInA) {
 			if (text.lastInTextNode) {
-				text.replace(`[ ${this.tag} ](${this.src})`);
+				const mdLink = `[ ${this.tag} ](${this.src})`;
+				linksList.push({ desc: this.tag, link: this.src });
+				text.replace('#'.repeat(mdLink.length));
 				this.tag = '';
 			}
 			return;
@@ -222,22 +267,33 @@ export default {
 				separate = 'text';
 			}
 			escaped = escaped || '\\(无内容\\)';
-
+			let date;
+			if (parsedEmail.date) {
+				date = new Date(parsedEmail.date).toLocaleString('zh-CN', {
+					timeZone: 'Asia/Shanghai',
+					hour12: false, // 可选：使用 24 小时制
+					year: 'numeric',
+					month: '2-digit',
+					day: '2-digit',
+					hour: '2-digit',
+					minute: '2-digit',
+					second: '2-digit'
+				});
+			}
 // 3. 构建消息，并对不可控的部分进行转义
 // 头部是我们自己控制的，所以不需要转义
-			const fullMessageText = `
-📬 **新邮件**
+			const fullMessageText = `📬 **新邮件**
 **${subject}**
 **From:** ${from}
-**To:** ${to}${parsedEmail.date ? `\n**Date:** ${escapeMarkdownV2(parsedEmail.date)}` : ''}
+**To:** ${to}${date ? `\n**Date:** ${escapeMarkdownV2(date)}` : ''}
 \\-\\-${separate}\\-\\-
 ${escaped}
       `;
 			// console.log(fullMessageText);
-			// return;
 			// 发送主消息，并获取它的 ID
 			const firstMessageId = await sendSplitMessage(fullMessageText, env);
 
+			// return;
 			// 2. 循环发送附件
 			if (parsedEmail.attachments.length > 0 && firstMessageId) {
 				for (const attachment of parsedEmail.attachments) {
