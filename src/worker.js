@@ -3,11 +3,12 @@ import { decode } from 'html-entities';
 
 const MAX_TELEGRAM_MESSAGE_LENGTH = 3500;
 const TELEGRAM_API_BASE = 'https://api.telegram.org/bot';
+const linksList = [{ desc: '', link: '' }].slice(0, 0);
 
 // --- 工具函数（与上一版本相同） ---
 
 function escapeMarkdownV2(text) {
-	const charsToEscape = /[_*\[\]()~`>#+\-=|{}.!]/g;
+	const charsToEscape = /(?<!\\)[_*\[\]()~`>#+\-=|{}.!]/g;
 	return text.replace(charsToEscape, '\\$&');
 }
 
@@ -47,7 +48,8 @@ async function sendSplitMessage(text, env) {
 		const responseData = await response.json();
 		if (!responseData.ok) {
 			console.error(`发送分割消息失败: ${responseData.description}`);
-			if (lastMessageId == null) throw new Error('responseData.description');
+			console.log(`chunk->${chunk}`);
+			if (lastMessageId == null) throw new Error(`${responseData.description}`);
 			return lastMessageId; // 返回已发送消息的ID，继续附件流程
 		}
 		console.log('sent a message');
@@ -153,9 +155,8 @@ class ElementHandler {
 	text(text) {
 		if (this.tag === 'td') text.after(' ');
 		if (this.tag === 'a') {
-			let value = `[ ${escapeMarkdownV2(decode(text.text)).trim()} ](${this.herf})`;
-			text.replace(value);
-			console.log(value);
+			const mdLink = `[ ${escapeMarkdownV2(decode(text.text)).trim() || 'link'} ](${this.herf})`;
+			text.replace(mdLink);
 			this.tag = '';
 			return;
 		} else if (['img', 'video', 'iframe', 'audio'].includes(this.tag) && !this.nestedInA) {
@@ -203,12 +204,14 @@ export default {
 	async email(message, env, ctx) {
 		try {
 			const parser = new PostalMime();
-			const parsedEmail = await parser.parse(message.raw);
+			const parsedEmail = await parser.parse(
+				message.raw
+			);
 
 			// 1. 构建并发送主邮件内容
 			const from = parsedEmail.from ? `${escapeMarkdownV2(parsedEmail.from.name ?? '')} <\`${parsedEmail.from.address}\`\\>` : '未知发件人';
 			const to = parsedEmail.to ? parsedEmail.to.map(rcpt => `${escapeMarkdownV2(rcpt.name ?? '')} <\`${rcpt.address}\`\\>`).join(', ') : '未知收件人';
-			const subject = parsedEmail.subject || '\\(无主题\\)';
+			const subject = escapeMarkdownV2(parsedEmail.subject) || '\\(无主题\\)';
 			let separate = '\\=\\=\\=\\=';
 			let escaped = '';
 			if (parsedEmail.html) {
@@ -226,30 +229,31 @@ export default {
 📬 **新邮件**
 **${subject}**
 **From:** ${from}
-**To:** ${to}
+**To:** ${to}${parsedEmail.date ? `\n**Date:** ${escapeMarkdownV2(parsedEmail.date)}` : ''}
 \\-\\-${separate}\\-\\-
 ${escaped}
       `;
+			// console.log(fullMessageText);
+			// return;
 			// 发送主消息，并获取它的 ID
 			const firstMessageId = await sendSplitMessage(fullMessageText, env);
 
 			// 2. 循环发送附件
 			if (parsedEmail.attachments.length > 0 && firstMessageId) {
-				for await (const attachment of parsedEmail.attachments) {
+				for (const attachment of parsedEmail.attachments) {
 					// 在发送附件时，回复到主消息 (firstMessageId)
 					await sendAttachment(attachment, firstMessageId, env);
 				}
 			}
 
 		} catch (error) {
-			console.error(`邮件处理失败: ${error.message}`);
 			await sendSplitMessage(`
 📬 **新邮件**
 **${message?.headers?.get('Subject') || '未获取到标题'}**
 **From:** ${message.from}
 **To:** ${message.to}
 \\-\\-\\(解析正文错误\\)\\-\\-
-${error.message}
+${escapeMarkdownV2(error.message)}
 `, env);
 		}
 	}
