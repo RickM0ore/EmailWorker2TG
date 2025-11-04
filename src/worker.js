@@ -168,7 +168,7 @@ class ElementHandler {
 		if (['br'].includes(element.tagName.toLowerCase())) return;
 		this.tag = element.tagName.toLowerCase();
 		if (element.tagName === 'a') {
-			this.herf = element.getAttribute('href') || '';
+			this.herf = element.getAttribute('href');
 			this.nestedInA = true;
 			element.onEndTag(() => {
 				this.nestedInA = false;
@@ -184,14 +184,14 @@ class ElementHandler {
 	// 处理文本内容
 	text(text) {
 		if (this.tag === 'td') text.after(' ');
-		if (this.tag === 'a') {
-			const desc = escapeMarkdownV2(decode(text.text)).trim() || 'link->';
+		if (this.tag === 'a' && this.herf) {
+			const desc = escapeMarkdownV2(decode(text.text)).trim() || 'link\\->';
 			linksList.push({ desc, link: this.herf });
 			text.replace('#'.repeat(15));
 			this.tag = '';
 			return;
 		} else if (['img', 'video', 'iframe', 'audio'].includes(this.tag) && !this.nestedInA) {
-			if (text.lastInTextNode) {
+			if (text.lastInTextNode && this.src) {
 				linksList.push({ desc: this.tag, link: this.src });
 				text.replace('#'.repeat(15));
 				this.tag = '';
