@@ -64,6 +64,8 @@ async function sendSplitMessage(text, env) {
 
 	// 2. 发送分片消息并建立回复链
 	for (const chunk of chunks) {
+		// console.log(chunk);
+		// continue;
 		const payload = {
 			chat_id: env.CHAT_ID, text: chunk, parse_mode: 'MarkdownV2'
 		};
@@ -165,7 +167,9 @@ class ElementHandler {
 			element.remove();
 			return;
 		}
-		if (['br'].includes(element.tagName.toLowerCase())) return;
+		if (['br'].includes(element.tagName.toLowerCase())) {
+			return;
+		}
 		this.tag = element.tagName.toLowerCase();
 		if (element.tagName === 'a') {
 			this.herf = element.getAttribute('href');
@@ -178,7 +182,6 @@ class ElementHandler {
 			this.src = element.getAttribute('src');
 		}
 		element.removeAndKeepContent();
-		// 对于链接 (a) 标签，我们什么都不做，让 a 标签处理器来处理
 	}
 
 	// 处理文本内容
@@ -187,18 +190,23 @@ class ElementHandler {
 		if (this.tag === 'a' && this.herf) {
 			const desc = escapeMarkdownV2(decode(text.text)).trim() || 'link\\->';
 			linksList.push({ desc, link: this.herf });
-			text.replace('#'.repeat(15));
-			this.tag = '';
+			text.replace('#'.repeat(15), { html: true });
+			// this.tag = '';
+			this.herf = '';
 			return;
 		} else if (['img', 'video', 'iframe', 'audio'].includes(this.tag) && !this.nestedInA) {
 			if (text.lastInTextNode && this.src) {
 				linksList.push({ desc: this.tag, link: this.src });
-				text.replace('#'.repeat(15));
+				text.replace('#'.repeat(15), { html: true });
 				this.tag = '';
 			}
 			return;
 		}
-		text.replace(escapeMarkdownV2(decode(text.text)) + '\n');
+		console.log(text.text, '|------->', decode(text.text));
+		if (['span', 'strong', 'em', 'b', 'i', 'del', 'ins', 'sub', 'sup', 'a'].includes(this.tag))
+			text.replace(escapeMarkdownV2(decode(text.text)), { html: true });
+		else
+			text.replace(escapeMarkdownV2(decode(text.text)) + '\n', { html: true });
 	}
 
 }
@@ -217,12 +225,8 @@ async function processHtml(html) {
 	rewriterInstance.on('*', new ElementHandler()); // 捕获所有元素的开始和文本
 	rewriterInstance.onDocument(new DocumentHandler());
 	let text = await rewriterInstance.transform(new Response(html)).text();
-	text = text.split('\n').map(row => {
-		return row.trim().replace(/<!doctype .*>\n?/i, '');
-	}).filter(row => {
-		return !!row.replaceAll(/[\s\n\u200B\u200C\u200D\uFEFF\u2060\u00A0\u034F͏]/g, '');
-	});
-	return text.join('\n').replaceAll(/<br\/?>/g, '\n');
+	return text.replace(/<!doctype.*>\n?/i, '').replaceAll(/[\u200B\u200C\u200D\uFEFF\u2060\u00A0\u034F͏]/g, '')
+	.replaceAll(/<\s*br\s*\/?>/g, '\n').replaceAll(/(\s*\n){2,}/g, '\n');
 }
 
 // --- Email Worker 入口 ---
@@ -273,7 +277,7 @@ export default {
 **${subject}**
 **From:** ${from}
 **To:** ${to}${date ? `\n**Date:** ${escapeMarkdownV2(date)}` : ''}
-\\-\\-${separate}\\-\\-
+\\-\\-\\-${separate}\\-\\-\\-
 ${escaped}
       `;
 			// console.log(fullMessageText);
@@ -295,7 +299,7 @@ ${escaped}
 **${subject}**
 **From:** ${from}
 **To:** ${to}${date ? `\n**Date:** ${escapeMarkdownV2(date)}` : ''}
-\\-\\-\\(解析正文错误\\)\\-\\-
+\\-\\-\\-\\(解析正文错误\\)\\-\\-\\-
 ${escapeMarkdownV2(error.message)}
 `, env);
 		}
