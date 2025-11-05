@@ -188,7 +188,7 @@ class ElementHandler {
 	text(text) {
 		if (this.tag === 'td') text.after(' ');
 		if (this.tag === 'a' && this.herf) {
-			const desc = escapeMarkdownV2(decode(text.text)).trim() || 'link\\->';
+			const desc = escapeMarkdownV2(decode(text.text)).trim() || 'link\\-\\>';
 			linksList.push({ desc, link: this.herf });
 			text.replace('#'.repeat(15), { html: true });
 			// this.tag = '';
@@ -202,7 +202,6 @@ class ElementHandler {
 			}
 			return;
 		}
-		console.log(text.text, '|------->', decode(text.text));
 		if (['span', 'strong', 'em', 'b', 'i', 'del', 'ins', 'sub', 'sup', 'a'].includes(this.tag))
 			text.replace(escapeMarkdownV2(decode(text.text)), { html: true });
 		else
@@ -225,7 +224,7 @@ async function processHtml(html) {
 	rewriterInstance.on('*', new ElementHandler()); // 捕获所有元素的开始和文本
 	rewriterInstance.onDocument(new DocumentHandler());
 	let text = await rewriterInstance.transform(new Response(html)).text();
-	return text.replace(/<!doctype.*>\n?/i, '').replaceAll(/[\u200B\u200C\u200D\uFEFF\u2060\u00A0\u034F͏]/g, '')
+	return text.replace(/<!doctype.*>\n?/i, '').replaceAll(/[\u200B\u200C\u200D\uFEFF\u2060\u00A0\u034F]/g, '')
 	.replaceAll(/<\s*br\s*\/?>/g, '\n').replaceAll(/(\s*\n){2,}/g, '\n');
 }
 
