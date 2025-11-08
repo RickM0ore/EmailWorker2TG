@@ -152,6 +152,8 @@ async function sendAttachment(attachment, replyToMessageId, env) {
 	}
 }
 
+let elementHandlerPassed = false;
+
 class ElementHandler {
 	constructor() {
 		this.tag = '';
@@ -186,6 +188,7 @@ class ElementHandler {
 
 	// 处理文本内容
 	text(text) {
+		elementHandlerPassed = true;
 		if (this.tag === 'td') text.after(' ');
 		if (this.tag === 'a' && this.herf) {
 			const desc = escapeMarkdownV2(decode(text.text)).trim() || 'link\\-\\>';
@@ -214,6 +217,13 @@ class ElementHandler {
 class DocumentHandler {
 	comments(comment) {
 		comment.remove();
+	}
+
+	text(text) {
+		if (!elementHandlerPassed) {
+			text.replace(escapeMarkdownV2(decode(text.text)));
+		}
+		elementHandlerPassed = false;
 	}
 }
 
