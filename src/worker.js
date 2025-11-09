@@ -12,7 +12,7 @@ function escapeMarkdownV2(text) {
 	return text.replace(charsToEscape, '\\$&');
 }
 
-const linkReplacer = /#{15}/;
+const linkReplacer = '\uffff\ufffe'.repeat(7)/*/#{15}/*/;
 
 function splitAndPush(arr, text) {
 	for (let i = 0; i < text.length; i += MAX_TELEGRAM_MESSAGE_LENGTH) {
@@ -29,9 +29,10 @@ function splitAndPush(arr, text) {
  * 发送消息到 Telegram, 如果消息太长则自动分割并以回复形式发送
  * @param {string} text - 要发送的完整文本
  * @param {{BOT_TOKEN: string, CHAT_ID: string}} env - 环境配置
+ * @param {{header:string}} metaData
  * @returns {Promise<number|null>} - 第一条消息的 message_id，用于附件回复
  */
-async function sendSplitMessage(text, env) {
+async function sendSplitMessage(text, metaData, env) {
 	const telegramApiUrl = `${TELEGRAM_API_BASE}${env.BOT_TOKEN}/sendMessage`;
 	let lastMessageId = null;
 
@@ -41,9 +42,9 @@ async function sendSplitMessage(text, env) {
 	 * */
 	const splits = text.split(linkReplacer);
 	console.log('linksList->', linksList.length, 'splits->', splits.length);
-	let builder = '';
+	let builder = metaData.header.endsWith('\n') ? metaData.header : metaData.header + '\n';
 	for (let t of splits) {
-		builder += t;
+		builder += escapeMarkdownV2(t);
 		if (builder.length > MAX_TELEGRAM_MESSAGE_LENGTH) {
 			builder = splitAndPush(chunks, builder);
 		}
@@ -179,6 +180,16 @@ class ElementHandler {
 			element.onEndTag(() => {
 				this.nestedInA = false;
 			});
+		} else {
+			try {
+				if (!['img'].includes(element.tagName.toLowerCase())) //exclude img
+					element.onEndTag((endTag) => {
+						if (!['span', 'strong', 'em', 'b', 'i', 'del', 'ins', 'sub', 'sup', 'a'].includes(endTag.name))
+							endTag.before('\n', { html: true });
+					});
+			} catch (e) {
+				console.log(element.tagName, e);
+			}
 		}
 		if (['img', 'video', 'iframe', 'audio'].includes(element.tagName.toLowerCase())) {
 			this.src = element.getAttribute('src');
@@ -193,22 +204,19 @@ class ElementHandler {
 		if (this.tag === 'a' && this.herf) {
 			const desc = escapeMarkdownV2(decode(text.text)).trim() || 'link\\-\\>';
 			linksList.push({ desc, link: this.herf });
-			text.replace('#'.repeat(15), { html: true });
+			text.replace('\uffff\ufffe'.repeat(7), { html: true });
 			// this.tag = '';
 			this.herf = '';
 			return;
 		} else if (['img', 'video', 'iframe', 'audio'].includes(this.tag) && !this.nestedInA) {
 			if (text.lastInTextNode && this.src) {
 				linksList.push({ desc: this.tag, link: this.src });
-				text.replace('#'.repeat(15), { html: true });
+				text.replace('\uffff\ufffe'.repeat(7), { html: true });
 				this.tag = '';
 			}
 			return;
 		}
-		if (['span', 'strong', 'em', 'b', 'i', 'del', 'ins', 'sub', 'sup', 'a'].includes(this.tag))
-			text.replace(escapeMarkdownV2(decode(text.text)), { html: true });
-		else
-			text.replace(escapeMarkdownV2(decode(text.text)) + '\n', { html: true });
+		text.replace((decode(text.text).replaceAll(/\s+/g, ' ')), { html: true });
 	}
 
 }
@@ -221,10 +229,11 @@ class DocumentHandler {
 
 	text(text) {
 		if (!elementHandlerPassed) {
-			text.replace(escapeMarkdownV2(decode(text.text)));
+			text.replace((decode(text.text).replaceAll(/\s+/g, ' ')));
 		}
 		elementHandlerPassed = false;
 	}
+
 }
 
 
@@ -251,11 +260,10 @@ export default {
 		const parsedEmail = await parser.parse(
 			message.raw
 		);
-
 		// 1. 构建并发送主邮件内容
 		const from = parsedEmail.from ? `${escapeMarkdownV2(parsedEmail.from.name ?? '')} <\`${parsedEmail.from.address}\`\\>` : '未知发件人';
 		const to = parsedEmail.to ? parsedEmail.to.map(rcpt => `${escapeMarkdownV2(rcpt.name ?? '')} <\`${rcpt.address}\`\\>`).join(', ') : '未知收件人';
-		const subject = escapeMarkdownV2(parsedEmail.subject) || '\\(无主题\\)';
+		const subject = escapeMarkdownV2(parsedEmail.subject || '(无主题)');
 		let date = null;
 		if (parsedEmail.date) {
 			date = new Date(parsedEmail.date).toLocaleString('zh-CN', {
@@ -271,27 +279,26 @@ export default {
 		}
 		try {
 			let separate = '\\=\\=\\=\\=';
-			let escaped = '';
+			let content = '';
 			if (parsedEmail.html) {
-				escaped = await processHtml(parsedEmail.html);
-				separate = 'html';
+				content = await processHtml(parsedEmail.html);
+				separate = 'HTML';
 			} else if (parsedEmail.text) {
-				escaped = escapeMarkdownV2(decode(parsedEmail.text));
-				separate = 'text';
+				content = decode(parsedEmail.text);
+				separate = 'TEXT';
 			}
-			escaped = escaped || '\\(无内容\\)';
-// 3. 构建消息，并对不可控的部分进行转义
-// 头部是我们自己控制的，所以不需要转义
-			const fullMessageText = `📬 **新邮件**
+			content = content || '(无内容)';
+
+
+			// console.log(content);
+			// 发送主消息，并获取它的 ID
+			const firstMessageId = await sendSplitMessage(content, {
+				header: `📬 **新邮件**
 **${subject}**
 **From:** ${from}
 **To:** ${to}${date ? `\n**Date:** ${escapeMarkdownV2(date)}` : ''}
-\\-\\-\\-${separate}\\-\\-\\-
-${escaped}
-      `;
-			// console.log(fullMessageText);
-			// 发送主消息，并获取它的 ID
-			const firstMessageId = await sendSplitMessage(fullMessageText, env);
+\\-\\-\\-${separate}\\-\\-\\-`
+			}, env);
 
 			// return;
 			// 2. 循环发送附件
@@ -303,14 +310,28 @@ ${escaped}
 			}
 
 		} catch (error) {
-			await sendSplitMessage(`
-📬 **新邮件**
+			try {
+
+				await sendSplitMessage(parsedEmail.text, {
+					header: `📬 **新邮件**
 **${subject}**
 **From:** ${from}
 **To:** ${to}${date ? `\n**Date:** ${escapeMarkdownV2(date)}` : ''}
-\\-\\-\\-\\(解析正文错误\\)\\-\\-\\-
+\\-\\-\\-\\(HTML错误\\)\\-\\-\\-
 ${escapeMarkdownV2(error.message)}
-`, env);
+\\-\\-\\-TEXT\\-\\-\\-`
+				}, env);
+
+
+			} catch (e) {
+				await sendSplitMessage(error.message, {
+					header: `📬 **新邮件**
+**${subject}**
+**From:** ${from}
+**To:** ${to}${date ? `\n**Date:** ${escapeMarkdownV2(date)}` : ''}
+\\-\\-\\-\\(HTML&TEXT错误\\)\\-\\-\\-`
+				}, env);
+			}
 		}
 	}
 };
