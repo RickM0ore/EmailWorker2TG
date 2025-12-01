@@ -184,7 +184,7 @@ class ElementHandler {
 			try {
 				if (!['img'].includes(element.tagName.toLowerCase())) //exclude img
 					element.onEndTag((endTag) => {
-						if (!['span', 'strong', 'em', 'b', 'i', 'del', 'ins', 'sub', 'sup', 'a'].includes(endTag.name))
+						if (!['span', 'strong', 'em', 'b', 'i', 'del', 'ins', 'sub', 'sup', 'a', 'td'].includes(endTag.name))
 							endTag.before('\n', { html: true });
 					});
 			} catch (e) {
@@ -244,7 +244,7 @@ async function processHtml(html) {
 	rewriterInstance.onDocument(new DocumentHandler());
 	let text = await rewriterInstance.transform(new Response(html)).text();
 	return text.replace(/<!doctype.*>\n?/i, '').replaceAll(/[\u200B\u200C\u200D\uFEFF\u2060\u00A0\u034F]/g, '')
-	.replaceAll(/<\s*br\s*\/?>/g, '\n').replaceAll(/(\s*\n){2,}/g, '\n');
+	.replaceAll(/<\s*?br(\s*\S+)*?\s*?\/?>/g, '\n').replaceAll(/(\s*\n){2,}/g, '\n');
 }
 
 // --- Email Worker 入口 ---
